@@ -1,0 +1,186 @@
+
+def p4_mapping(component) {
+    [
+        "sympay" : "//depot/example.com/sympay-Tomcat/properties",
+        "sympayoffline" : "//depot/example.com/sympayoffline-Tomcat/properties",
+        "wallet" : "//depot/example.com/wallet-Tomcat/properties",
+        "sympayconsole" : "//depot/example.com/sympayconsole-Tomcat/properties",
+        "allpago" : "//depot//example.com/allpago-Tomcat/properties",
+        "amex" : "//depot/example.com/amex-Tomcat/properties",
+        "hpp" : "//depot/example.com/hpp-Tomcat/properties",
+        "tradecompliance" : "//depot/example.com/tradecompliance-Tomcat/properties",
+    ][component]
+}
+
+def config_root_mapping(env) {
+    [
+        "DEV4" : "/apps/dev4/deploy/config/",
+        "QA4"  : "/apps/qa4/deploy/config/",
+        "QA5"  : "/apps/qa5/deploy/config/",
+    ][env]
+}
+
+def env_mapping(env, component) {
+    [
+        'DEV4' : [
+            "sympay" : "tomcat@sympaydev4.example.com",
+            "sympayoffline" : "tomcat@sympayofflinedev4.example.com",
+            "wallet" : "tomcat@walletdev4.example.com",
+            "sympayconsole" : "tomcat@sympayconsoledev4.example.com",
+            "allpago" : "tomcat@allpagodev4.example.com",
+            "amex" : "tomcat@amexdev4.example.com",
+            "hpp" : "tomcat@hppdev4.example.comm",
+            "tradecompliance" : "tomcat@tradecompliancedev4.example.com",
+        ],
+        'QA4': [
+            "sympay" : "tomcat@sympayqa4.example.com",
+            "sympayoffline" : "tomcat@sympayofflineqa4.example.com",
+            "wallet" : "tomcat@walletqa4.example.com",
+            "sympayconsole" : "tomcat@sympayconsoleqa4.example.com",
+            "allpago" : "tomcat@allpagoqa4.example.com",
+            "amex" : "tomcat@amexqa4.example.com",
+            "hpp" : "tomcat@hppqa4.example.comm",
+            "tradecompliance" : "tomcat@tradecomplianceqa4.example.com",
+        ],
+        'QA5': [
+            "sympay" : "tomcat@sympayqa5.example.com",
+            "sympayoffline" : "tomcat@sympayofflineqa5.example.com",
+            "wallet" : "tomcat@walletqa5.example.com",
+            "sympayconsole" : "tomcat@sympayconsoleqa5.example.com",
+            "allpago" : "tomcat@allpagoqa5.example.com",
+            "amex" : "tomcat@amexqa5.example.com",
+            "hpp" : "tomcat@hppqa.example.comm",
+            "tradecompliance" : "tomcat@tradecomplianceqa5.example.com",
+        ]
+    ][env][component]
+}
+
+def p4_sync(component, cred_id. depot_path, workspace_suffix) {
+    checkout([$class: 'PerforceScm', 
+        credential: "${cred_id}", 
+        populate: [$class: 'AutoCleanImpl', 
+            delete: true, 
+            modtime: false, 
+            parallel: [enable: false, minbytes: '1024', minfiles: '1', path: '/usr/local/bin/p4', threads: '4'], 
+            pin: '', 
+            quiet: true, 
+            replace: true],
+        workspace: [$class: 'ManualWorkspaceImpl', 
+            charset: 'none', 
+            name: "jenkins-${NODE_NAME}-${component}", 
+            pinHost: false, 
+            spec: [allwrite: false, 
+                clobber: false, 
+                compress: false, 
+                line: 'LOCAL', 
+                locked: false, 
+                modtime: false, 
+                rmdir: false, 
+                streamName: '', 
+                view: """
+${depot_path}/${workspace_suffix}/... //jenkins-${NODE_NAME}-${component}/${workspace_suffix}/...
+"""
+    ]]])
+}
+
+pipeline {
+    agent { label "$node" }
+    environment {
+        CMD="ssh -q -T"
+        DOMAIN_SUFFIX="example.com"
+        CONFIG_ROOT=config_root_mapping("${ENV}")
+        TEAMS_WEBHOOK_DEPLOYMENTS="https://example.com/webhook"
+    }
+    stages {
+        stage("Cleanup") { 
+            steps {
+                echo "[0] Running on node: ${NODE_NAME}"
+                echo "[1] Cleaning up ..."
+                cleanWs()
+
+                // send notification before starting
+                script {
+                    def mesg = "📢 📢 📢 ${JOB_NAME}#${BUILD_NUMBER} - Starting request by **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, COMPONENT:${COMPONENT} ... "
+
+                    sh """#!/bin/bash
+                        curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_DEPLOYMENTS}
+                    """
+                }
+            }
+        }
+
+        stage("P4 Sync") {
+            steps {
+                script {
+                    echo "[2] P4 sync ..."
+
+                    currentBuild.displayName = "#${BUILD_NUMBER} - ${ENV} - ${COMPONENT}"
+
+                    if ("${DEPLOY}" == "false") { error "I need explicit confirmation!" }
+                    
+                    "$COMPONENT".split(',').each {
+                        def host=env_mapping("${ENV}", "${it}").split('@')[-1]
+
+                        echo "@@@@@ [Env: ${ENV}, Component:${it}, Host:${host}] @@@@@"
+                        p4_sync(it, p4_mapping("${it}"), "${ENV}/${host}")
+
+                        sh '''
+                            pwd
+                            ls -la
+                            ls -la $ENV
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage("Deploy CONFIG_ROOT") {
+            steps {
+                script {
+                    echo "[3] Deploying config_root ..."
+
+                    "$COMPONENT".split(',').each {
+                        def host=env_mapping("${ENV}", "${it}")
+
+                        echo "+++++ deploying to target ${host}:$CONFIG_ROOT +++++"
+                        writeFile(file:'host.txt', text: host)
+
+                        sh '''#!/bin/sh
+                            HOST=$(cat host.txt)
+                            HOSTNAME=$(echo $HOST | cut -d'@' -f2)
+
+                            echo "@@@ [$ENV][$HOSTNAME][$HOST][$CONFIG_ROOT] @@@"
+                            cd $ENV/$HOSTNAME
+                            ls -la
+
+                            find ./sym/ -type f -print0 | xargs -0 tar cvzf - | $CMD $HOST tar xzf - -C  $CONFIG_ROOT          
+                            echo "STATUS: ${PIPESTATUS[@]}"
+
+                            $CMD $HOST "chmod -R a+r $CONFIG_ROOT" || true
+
+                            if [ "$AUTO_RESTART" = "true" ]; then
+                                # touch restart request
+                                echo " ... triggering an auto-restart on [$HOSTNAME] ... "
+
+                                $CMD $HOST "mkdir -p ~/restarter && touch ~/restarter/___\\$(hostname)_\\$(cat /sys/class/net/\\$(/usr/sbin/ip route show default | awk '/default/ {print \\$5}')/address | sed -e 's/:/_/g')___" || true
+                                $CMD $HOST "ls -la ~/restarter"
+                            fi
+                        '''
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo "Post steps ..."
+            script {
+                def mesg = "✅ ${JOB_NAME}#${BUILD_NUMBER} - Properties Deployment Done! Target service(s) will auto-restart shortly. **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, COMPONENT:${COMPONENT}]"
+
+                sh """#!/bin/bash
+                    curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_DEPLOYMENTS}
+                """
+            }
+        }
+    }
+}

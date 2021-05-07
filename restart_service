@@ -1,0 +1,335 @@
+
+def git_pull(scm_url, cred_id) {
+    checkout([$class: 'GitSCM',
+        branches: [[name: '*/master']],
+        extensions: [[$class: 'CloneOption', shallow: true, timeout: 20]],
+        gitTool: 'Default',
+        userRemoteConfigs: [
+            [
+                credentialsId: "${cred_id}", 
+                url: "${scm_url}"
+            ]
+        ]
+    ])
+}
+
+pipeline {
+    agent { label "$node" }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '30'))
+    }
+
+    environment {
+        TEAMS_WEBHOOK_DEPLOYMENTS="https://example.com/webhook"
+    }
+
+    stages {
+        stage("Cleanup") { 
+            steps {
+                echo "[0] Running on node: ${NODE_NAME}"
+                echo "[1] Cleaning up ..."
+                cleanWs()
+
+                // send notification before starting
+                script {
+                    def mesg = "▶️▶️▶️ ${JOB_NAME}#${BUILD_NUMBER} - Starting request by **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, SERVICE:${SERVICE}, ACTION:${ACTION}] ◀️◀️◀️"
+
+                    sh """#!/bin/bash
+                        curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_ESTORE_DEPLOYMENTS}
+                    """
+                }
+            }
+        }
+
+        stage("Git Pull") {
+            steps {
+                script {
+                    echo "[2] git pull ..."
+
+                    currentBuild.displayName = "#${BUILD_NUMBER} - ${ENV} - ${SERVICE} - ${ACTION}"
+               
+                    echo "@@@@@ [ENV: ${ENV}, SERVICE:${SERVICE}, ACTION:${ACTION}] @@@@@"
+
+                    git_pull()
+
+                    sh '''
+                        pwd
+                        ls -la
+                    '''
+                }
+            }
+        }
+
+        stage("Action") {
+            steps {
+                script {
+                    echo "[3] Requested action - ${ENV} / ${SERVICE} / ${ACTION} ..."
+
+                    sh """
+                        source $HOME/venv/bin/activate
+
+                        case "$ENV" in 
+                            QA4)
+                                source $WORKSPACE/qa4.sh
+                                cd $WORKSPACE
+
+                                case "$SERVICE" in 
+                                    ALL)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_all
+                                            ;;
+                                            stop)
+                                                qa4_stop_all
+                                            ;;
+                                            status)
+                                                qa4_status_all
+                                            ;;
+                                        esac
+                                    ;;
+                                    COHERENCE_CLUSTER)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_coherence_cluster
+                                            ;;
+                                            stop)
+                                                qa4_stop_coherence_cluster
+                                            ;;
+                                            status)
+                                                qa4_status_coherence_cluster
+                                            ;;
+                                        esac
+                                    ;;
+                                    SEARCHSERVER_CLUSTER)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_searchserver_cluster
+                                            ;;
+                                            stop)
+                                                qa4_stop_searchserver_cluster
+                                            ;;
+                                            status)
+                                                qa4_status_searchserver_cluster
+                                            ;;
+                                        esac
+                                    ;;
+                                    ALL-COHERENCE_CLUSTER-SEARCHSERVER_CLUSTER)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_rest
+                                            ;;
+                                            stop)
+                                                qa4_stop_rest
+                                            ;;
+                                            status)
+                                                qa4_status_rest
+                                            ;;
+                                        esac
+                                    ;;
+                                    ECOM_CLOUD)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_ecomcloud
+                                            ;;
+                                            stop)
+                                                qa4_stop_ecomcloud
+                                            ;;
+                                            status)
+                                                qa4_status_ecomcloud
+                                            ;;
+                                        esac
+                                    ;;
+                                    CSR)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_csr
+                                            ;;
+                                            stop)
+                                                qa4_stop_csr
+                                            ;;
+                                            status)
+                                                qa4_status_csr
+                                            ;;
+                                        esac
+                                    ;;
+                                    ESTORE1)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_estore
+                                            ;;
+                                            stop)
+                                                qa4_stop_estore
+                                            ;;
+                                            status)
+                                                qa4_status_estore
+                                            ;;
+                                        esac
+                                    ;;
+                                    ESTORE2)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_estore2
+                                            ;;
+                                            stop)
+                                                qa4_stop_estore2
+                                            ;;
+                                            status)
+                                                qa4_status_estore2
+                                            ;;
+                                        esac
+                                    ;;
+                                    ESTORE_EMAIL)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_estore_email
+                                            ;;
+                                            stop)
+                                                qa4_stop_estore_email
+                                            ;;
+                                            status)
+                                                qa4_status_estore_email
+                                            ;;
+                                        esac
+                                    ;;
+                                    ESTORE_OM)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_estore_om
+                                            ;;
+                                            stop)
+                                                qa4_stop_estore_om
+                                            ;;
+                                            status)
+                                                qa4_status_estore_om
+                                            ;;
+                                        esac
+                                    ;;
+                                    ESTORE_SETTLE)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_estore_settle
+                                            ;;
+                                            stop)
+                                                qa4_stop_estore_settle
+                                            ;;
+                                            status)
+                                                qa4_status_estore_settle
+                                            ;;
+                                        esac
+                                    ;;
+                                    COHERENCE)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_coherence
+                                            ;;
+                                            stop)
+                                                qa4_stop_coherence
+                                            ;;
+                                            status)
+                                                qa4_status_coherence
+                                            ;;
+                                        esac
+                                    ;;
+                                    SEARCHSERVER_MASTER)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_searchserver_master
+                                            ;;
+                                            stop)
+                                                qa4_stop_searchserver_master
+                                            ;;
+                                            status)
+                                                qa4_status_searchserver_master
+                                            ;;
+                                        esac
+                                    ;;
+                                    SEARCHSERVER_SLAVE)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_searchserver_slave
+                                            ;;
+                                            stop)
+                                                qa4_stop_searchserver_slave
+                                            ;;
+                                            status)
+                                                qa4_status_searchserver_slave
+                                            ;;
+                                        esac
+                                    ;;
+                                    NOTIFIER)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_notifier
+                                            ;;
+                                            stop)
+                                                qa4_stop_notifier
+                                            ;;
+                                            status)
+                                                qa4_status_notifier
+                                            ;;
+                                        esac
+                                    ;;
+                                    TIMETRAVEL)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_timetravel
+                                            ;;
+                                            stop)
+                                                qa4_stop_timetravel
+                                            ;;
+                                            status)
+                                                qa4_status_timetravel
+                                            ;;
+                                        esac
+                                    ;;
+                                    SYMRULEENGINE)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_symruleengine
+                                            ;;
+                                            stop)
+                                                qa4_stop_symruleengine
+                                            ;;
+                                            status)
+                                                qa4_status_symruleengine
+                                            ;;
+                                        esac
+                                    ;;
+                                    CM)
+                                        case "$ACTION" in 
+                                            start,restart)
+                                                qa4_start_cm
+                                            ;;
+                                            stop)
+                                                qa4_stop_cm
+                                            ;;
+                                            status)
+                                                qa4_status_cm
+                                            ;;
+                                        esac
+                                    ;;
+                                esac
+                                # end of case $SERVICE
+                            ;;
+                            # end of case QA4
+                        esac
+                        # end of case $ENV
+                    """
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo "Post steps ..."
+            script {
+                def mesg = "◀️◀️◀️ ${JOB_NAME}#${BUILD_NUMBER} - Done! **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, SERVICE:${SERVICE}, ACTION:${ACTION}] ▶️▶️▶️"
+
+                sh """#!/bin/bash
+                    curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_DEPLOYMENTS}
+                """
+            }
+        }
+    }
+}

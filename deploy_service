@@ -1,0 +1,329 @@
+
+def git_pull(scm_url, cred_id) {
+    checkout([$class: 'GitSCM',
+        branches: [[name: '*/master']],
+        extensions: [[$class: 'CloneOption', shallow: true, timeout: 20]],
+        gitTool: 'Default',
+        userRemoteConfigs: [
+            [
+                credentialsId: "${cred_id}", 
+                url: "${scm_url}"
+            ]
+        ]
+    ])
+}
+
+pipeline {
+    agent { label "$node" }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '30'))
+    }
+
+    environment {
+        CMD="ssh -q -T"
+        DOMAIN_SUFFIX="example.com"
+        ARTIFACTORY_MVN_SNAPSHOT="https://artifactory.example.com/artifactory/maven-snapshot-builds"
+        TEAMS_WEBHOOK_DEPLOYMENTS="https://example.com/webhook"
+    }
+
+    stages {
+        stage("Cleanup") { 
+            steps {
+                echo "[0] Running on node: ${NODE_NAME}"
+                echo "[1] Cleaning up ..."
+                cleanWs()
+
+                // send notification before starting
+                script {
+                    def mesg = "⛔️ ${JOB_NAME}#${BUILD_NUMBER} - Starting request by **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, COMPONENT:${COMPONENT}, ARTIFACT_PATH:${ARTIFACT_PATH}] ... "
+
+                    sh """#!/bin/bash
+                        curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_ESTORE_DEPLOYMENTS}
+                    """
+                }
+            }
+        }
+
+        stage("Git Pull") {
+            steps {
+                script {
+                    echo "[2] git pull ..."
+
+                    currentBuild.displayName = "#${BUILD_NUMBER} - ${ENV} - ${COMPONENT} - ${ARTIFACT_PATH}"
+               
+                    echo "@@@@@ [ENV: ${ENV}, COMPONENT:${COMPONENT}, ARTIFACT_PATH:${ARTIFACT_PATH}] @@@@@"
+
+                    git_pull()
+
+                    sh '''
+                        pwd
+                        ls -la
+                    '''
+                }
+            }
+        }
+
+        stage("Deploy") {
+            steps {
+                script {
+                    def artifactory_url
+                    def action
+
+                    switch (ARTIFACT_PATH) {
+                        case "RESTART":
+                        case "START":
+                        case "STOP":
+                            action=ARTIFACT_PATH
+                            artifactory_url=ARTIFACT_PATH
+                            break
+
+                        default:
+                            artifactory_url="${env.ARTIFACTORY_MVN_SNAPSHOT}/${ARTIFACT_PATH}"
+                            break
+                    }
+
+                    echo "[3] Requested deploy - ${ENV} / ${COMPONENT} / ${artifactory_url} ..."
+
+                    switch (COMPONENT) {
+                        case "estore-presentation":
+                            echo "... deploying [estore-presentation] ..."
+
+                            switch (ENV) {
+                                case "DEV4":
+                                    sh """
+                                        echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                        cd estore/
+                                        DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                                    """
+                                    break
+                                case "QA4":
+                                    sh """
+                                        echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                        cd estore/
+                                        DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore  ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                                        DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore2 ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                                    """
+                                    break
+                            }
+                            break
+
+                        case "estorePreview":
+                            echo "... deploying [estorePreview] ..."
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "estore-email":
+                            echo "... deploying [estore-email] ..." 
+                            
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore-email ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "estore-om":
+                        case "estore-om-preview'":
+                            echo "... deploying [estore-om] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore-om ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "estore-settle":
+                            echo "... deploying [estore-settle] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ESTORE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=estore-settle ACTION=${action?:''} OP=DEPLOY  ESTORE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+                            
+                        case "ecomcloud":
+                        case "ecomcloudPreview":
+                            echo "... deploying [ecomcloud] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, ECOMMERCECLOUD_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=ecommercecloud ACTION=${action?:''} OP=DEPLOY  ECOMMERCECLOUD_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+                        
+                        case "csr":
+                            echo "... deploying [csr] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, CSR_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=csr ACTION=${action?:''} OP=DEPLOY  CSR_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+                            
+                        case "searchserver":
+                            echo "... deploying [searchserver] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, SEARCHSERVER_MASTER_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=searchserver ACTION=${action?:''} OP=DEPLOY  SEARCHSERVER_MASTER_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "searchserver-slave":
+                            echo "... deploying [searchserver-slave] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, SEARCHSERVER_SLAVE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=searchserver-slave ACTION=${action?:''} OP=DEPLOY  SEARCHSERVER_SLAVE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "cmserver":
+                            echo "... deploying [cmserver] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, CMSERVER_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=cmserver ACTION=${action?:''} OP=DEPLOY  CMSERVER_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "notifier":
+                            echo "... deploying [notifier] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, NOTIFIER_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=notifier ACTION=${action?:''} OP=DEPLOY  NOTIFIER_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "symruleengine":
+                            echo "... deploying [symruleengine] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, SYMRULEENGINE_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=symruleengine ACTION=${action?:''} OP=DEPLOY  SYMRULEENGINE_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "epWebServices":
+                            echo "... deploying [epWebServices] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, EPWEBSERVICES_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=ep-webservices ACTION=${action?:''} OP=DEPLOY  EPWEBSERVICES_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "timetravel":
+                            echo "... deploying [timetravel] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, TIMETRAVEL_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=timetravel ACTION=${action?:''} OP=DEPLOY  TIMETRAVEL_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "datasync":
+                            echo "... deploying [datasync] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, DATASYNC_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=data-sync ACTION=${action?:''} OP=DEPLOY  DATASYNC_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "importexport":
+                            echo "... deploying [importexport] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, IMPORT_EXPORT_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=import-export ACTION=${action?:''} OP=DEPLOY  IMPORT_EXPORT_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "cacheEviction":
+                            echo "... deploying [cacheEviction] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, CACHE_EVICTION_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=cache-eviction ACTION=${action?:''} OP=DEPLOY  CACHE_EVICTION_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "coherenceExtendGrid":
+                            echo "... deploying [coherenceExtendGrid] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, COHERENCE_EXTEND_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=coherence-grid ACTION=${action?:''} OP=DEPLOY  COHERENCE_EXTEND_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+
+                        case "coherenceExtendGridPreview":
+                            echo "... deploying [coherenceExtendGridPreview] ..." 
+
+                            sh """
+                                echo "DEPLOY: ${DEPLOY}, ENV: ${ENV}, COHERENCE_EXTEND_ARTIFACTORY: ${artifactory_url}"
+
+                                cd estore/
+                                DEPLOY=${DEPLOY} ENV=${ENV} COMPONENT=coherence-grid-preview ACTION=${action?:''} OP=DEPLOY  COHERENCE_EXTEND_ARTIFACTORY=${artifactory_url}  ./platform_deploy_tomcat
+                            """
+                            break
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            echo "Post steps ..."
+            script {
+                def mesg = "✅ ${JOB_NAME}#${BUILD_NUMBER} - App Deployment Done! **${currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').userName}** -> [ENV: ${ENV}, COMPONENT:${COMPONENT}, ARTIFACT_PATH:${ARTIFACT_PATH}]"
+
+                sh """#!/bin/bash
+                    curl -s -H 'Content-Type: application/json' -d '{\"text\": \"${mesg}\"}' ${TEAMS_WEBHOOK_ESTORE_DEPLOYMENTS}
+                """
+            }
+        }
+    }
+}
